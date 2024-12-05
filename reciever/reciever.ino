@@ -2,6 +2,7 @@
 #include <LoRa.h>
 #include "LowPower.h"
 
+
 //LoR32u4II 868MHz or 915MHz (black board)
 #define SCK     15
 #define MISO    14
@@ -40,9 +41,12 @@ uint8_t beacon_send = 0;
 unsigned long previousMillis = 0;
 const long interval = 1000;
 
+long rand_time = 0;
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
+  while(!Serial);
   randomSeed(analogRead(0));
   LoRa.setPins(SS, RST, DI0);
   if (!LoRa.begin(BAND, PABOOST)) {
@@ -55,9 +59,8 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  long rand_time = random(2, 4);
   if (!receive_state) {
+    rand_time = random(2, 10);
     beacon_packet.beacon_time = rand_time;
 
     LoRa.beginPacket();
@@ -66,8 +69,7 @@ void loop() {
     beacon_send++;
     receive_state = true;
     previousMillis = millis();
-  }
-  else {
+  } else {
     timed_out = false;
     while (receive_state) {
       int packetSize = LoRa.parsePacket();
