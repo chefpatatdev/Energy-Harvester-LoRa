@@ -62,7 +62,7 @@ void loop() {
   if (!receive_state) {
     rand_time = random(2, 10);
     beacon_packet.beacon_time = rand_time;
-
+    Serial.println("Sending");
     LoRa.beginPacket();
     LoRa.write((uint8_t *)&beacon_packet, sizeof(beacon_packet));
     LoRa.endPacket();
@@ -104,7 +104,7 @@ void loop() {
     Serial.println(beacon_send);
     Serial.print("Ack received: ");
     Serial.println(ack_count);
-    //LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); //Put in ultra sleep mode
+    //LowPower.powersSave(SLEEP_FOREVER, ADC_OFF, BOD_OFF); //Put in ultra sleep mode
     while (1);
   }
 }
