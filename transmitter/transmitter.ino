@@ -1,8 +1,8 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <EEPROM.h>
+#include "Arduino_FreeRTOS.h"
 
-#define LOG_LINES 20
 #define TEAM_NUMBER 1
 
 #define SCK     15
@@ -29,13 +29,16 @@ typedef struct
 } Ack;
 Ack ack_packet;
 
-long next_beacon_timestamp = 0;
+//long next_beacon_timestamp = 0;
+long beacon_time = 0;
 long recieved_beacon_timestamp = 0;
 uint8_t beacon_count = 0;
 int beacon_packet_size = sizeof(Beacon);
 
 int lastAddress = 0;
 
+void task_process_command( void *params);
+void task_recieve_packet( void *params);
 
 void setup() {
   Serial.begin(9600);
@@ -53,35 +56,17 @@ void setup() {
   ack_packet.voltage = 0.0;
   int sensorValue = analogRead(A0);
 
-  EEPROM.get( 0, lastAddress ); //read the lastAddress where data was printed to and continue there
-  if (lastAddress < 0 || lastAddress > EEPROM.length()) { //check if lastAddress is in valid range, address 0 is reserved for the lastAddress
-    lastAddress = 0; //if no address is found, set address to 0x4 which is equal to sizeof(float) as start address
-  }
+  lastAddress = 0; //sets address back to 0x0
+  
+  BaseType_t ret = xTaskCreate(task_process_command, "task_process_command", 1024, NULL, 1, NULL);
+  Serial.print(ret);
+  ret = xTaskCreate(task_recieve_packet, "task_recieve_packet", 128, NULL, 1, NULL);
+  Serial.print(ret);
+
+  vTaskStartScheduler();
 }
 
 void loop() {
-  // try to parse packet
-  int packet_size = LoRa.parsePacket();
-  if (packet_size == beacon_packet_size) {
-    uint8_t buf[packet_size];
-
-    int i = 0;
-    while (LoRa.available()) {
-      buf[i] = LoRa.read();
-      i++;
-    }
-    beacon_packet = *(Beacon*)buf;
-    if (beacon_packet.team_number == TEAM_NUMBER) {
-      recieved_beacon_timestamp = millis();
-      Serial.print("team number: ");
-      Serial.println(beacon_packet.team_number);
-      Serial.print("beacon time: ");
-      Serial.println(beacon_packet.beacon_time);
-      float voltage = read_voltage();
-      send_ack(voltage);
-      log_data(voltage);
-    }
-  }
 }
 
 void send_ack(float voltage) {
@@ -101,28 +86,118 @@ float read_voltage() {
   return voltage;
 }
 
-void print_values() { //print last 20 values
-  float temp = 0;
+void print_all_values() { //print last lines values
+  float temp_voltage = 0;
+  long temp_timestamp = 0;
   int currentAddress = lastAddress;
 
-  for (int i = 0; i <= LOG_LINES; i++) {
-    currentAddress = currentAddress - sizeof(float);
-    if (currentAddress < sizeof(float)) { //loop back to top of EEPROM address space
-      currentAddress = EEPROM.length() - sizeof(float);
-    }
-    EEPROM.get(currentAddress, temp);
-    //Serial.print(currentAddress);
-    Serial.print(temp);
-    Serial.println(" °C");
-    delay(10);
+  while (currentAddress > (sizeof(float) + sizeof(long))) {
+    currentAddress = currentAddress - sizeof(long);
+    EEPROM.get(currentAddress, temp_voltage);
+    currentAddress = currentAddress - sizeof(long);
+    EEPROM.get(currentAddress, temp_timestamp);
+    Serial.print(temp_timestamp);
+    Serial.print(": ");
+    Serial.print(temp_voltage);
+    Serial.println(" V");
+    delay(1);
   }
 }
 
-void log_data(float voltage) {
-  lastAddress += sizeof(float); //move 4 bytes up in address
+void print_last_value() {
+  int currentAddress = lastAddress;
+  float temp_voltage = 0;
+  long temp_timestamp = 0;
 
-  EEPROM.put(lastAddress, voltage);
-  if (lastAddress >= EEPROM.length()) { //create circular buffer, loop back to address 0x04
-    lastAddress = sizeof(float);
+  if (currentAddress > (sizeof(float) + sizeof(long))) {
+    currentAddress = currentAddress - sizeof(long);
+    EEPROM.get(currentAddress, temp_voltage);
+    currentAddress = currentAddress - sizeof(long);
+    EEPROM.get(currentAddress, temp_timestamp);
+    Serial.print(temp_timestamp);
+    Serial.print(": ");
+    Serial.print(temp_voltage);
+    Serial.println(" V");
+    delay(1);
+  } else {
+    Serial.println("EEPROM address is empty!");
   }
+
+}
+
+void log_data(long timestamp, float voltage) {
+  if ((lastAddress + sizeof(long) + sizeof(float)) >= EEPROM.length()) { //create circular buffer, loop back to address 0x00
+    lastAddress = 0x0;
+  }
+
+  EEPROM.put(lastAddress, timestamp);
+  lastAddress += sizeof(long); //move 4 bytes up in address
+  EEPROM.put(lastAddress, voltage);
+  lastAddress += sizeof(float); //move 4 bytes up in address
+}
+
+void task_recieve_packet( void *params) {
+  while (1) {
+    // try to parse packet
+    int packet_size = LoRa.parsePacket();
+    if (packet_size == beacon_packet_size) {
+      uint8_t buf[packet_size];
+
+      int i = 0;
+      while (LoRa.available()) {
+        buf[i] = LoRa.read();
+        i++;
+      }
+      beacon_packet = *(Beacon*)buf;
+      if (beacon_packet.team_number == TEAM_NUMBER) {
+        recieved_beacon_timestamp = millis();
+        Serial.print("team number: ");
+        Serial.println(beacon_packet.team_number);
+        Serial.print("beacon time: ");
+        Serial.println(beacon_packet.beacon_time);
+        float voltage = read_voltage();
+        send_ack(voltage);
+        log_data(recieved_beacon_timestamp, voltage);
+        if (beacon_count == 20) {
+          print_all_values();
+        }
+      }
+    }
+    vTaskDelay( 1 / portTICK_PERIOD_MS ); 
+  }
+  vTaskDelete(NULL);
+}
+
+void task_process_command( void *params ) {
+  while (1) {
+    if (Serial.available() > 0) {
+      String command_input = Serial.readStringUntil('\n');
+      if (command_input.length() == 1) {
+        char command_input_char = command_input[0];
+        switch (command_input_char) {
+          case '1':
+            Serial.println("Case1");
+            print_last_value();
+            break;
+          case '2':
+            Serial.println("Case2");
+            print_all_values();
+            break;
+          case '3':
+            Serial.println("Entering sleep mode...");
+            break;
+          default:
+            Serial.println("Invalid Input:");
+            Serial.println("Use 1, 2, or 3 to start command");
+            break;
+        }
+      }
+      else {
+        Serial.println("Invalid Input:");
+        Serial.println("Use 1, 2, or 3 to start command");
+      }
+    }
+    vTaskDelay( 100 / portTICK_PERIOD_MS ); 
+  }
+  vTaskDelete(NULL);
 }
