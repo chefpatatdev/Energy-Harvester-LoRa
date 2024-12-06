@@ -13,7 +13,7 @@
 #define BAND    8663E5  // 915E6
 #define PABOOST true
 
-#define TEAM_NUMBER 1
+#define TEAM_NUMBER 1 // number of team
 
 typedef struct
 {
@@ -61,6 +61,8 @@ void setup() {
 void loop() {
   if (!receive_state) {
     rand_time = random(2, 10);
+    Serial.print("random time: ");
+    Serial.println(rand_time);
     beacon_packet.beacon_time = rand_time;
     Serial.println("Sending");
     LoRa.beginPacket();
@@ -72,18 +74,18 @@ void loop() {
   } else {
     timed_out = false;
     while (receive_state) {
-      int packetSize = LoRa.parsePacket();
+      int packetSize = LoRa.parsePacket(); // try to parse received packet
       if (packetSize == ack_packet_size) { //this checks if the size is the expected size, thus also filters out unwanted data
         uint8_t buf[ack_packet_size];
         int i = 0;
         while (LoRa.available()) {
-          buf[i] = LoRa.read();
+          buf[i] = LoRa.read(); // read buffer
           i++;
         }
         ack_packet = *(Ack*)buf;
-        if (ack_packet.team_number == TEAM_NUMBER) {
+        if (ack_packet.team_number == TEAM_NUMBER) { // check for the right team number
           Serial.print("Voltage: ");
-          Serial.println(ack_packet.voltage);
+          Serial.println(ack_packet.voltage); // get voltage from received struct
           ack_count++;
           receive_state = false;
         }
@@ -104,7 +106,8 @@ void loop() {
     Serial.println(beacon_send);
     Serial.print("Ack received: ");
     Serial.println(ack_count);
-    //LowPower.powersSave(SLEEP_FOREVER, ADC_OFF, BOD_OFF); //Put in ultra sleep mode
-    while (1);
+    delay(150); // give time to print to serial monitor
+    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); //Put in ultra sleep mode
+    //while (1);
   }
 }
