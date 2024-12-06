@@ -2,9 +2,11 @@
 #include <LoRa.h>
 #include <EEPROM.h>
 #include "Arduino_FreeRTOS.h"
+//#include "LowPower.h"
 
-#define TEAM_NUMBER 1
+#define TEAM_NUMBER 1 //number of team
 
+//LoRa RFM95W pinout
 #define SCK     15
 #define MISO    14
 #define MOSI    16
@@ -14,22 +16,23 @@
 #define BAND    8663E5
 #define PABOOST true
 
+//struct for a beacon packet 
 typedef struct
 {
   uint8_t team_number;
   long beacon_time;
 } Beacon;
-Beacon beacon_packet;
+Beacon beacon_packet; //create beacon packet placeholder
 
+//struct for a acknowledgement packet
 typedef struct
 {
   uint8_t team_number;
   uint8_t beacon_count;
   float voltage;
 } Ack;
-Ack ack_packet;
+Ack ack_packet; //create ack packet placeholder
 
-//long next_beacon_timestamp = 0;
 long beacon_time = 0;
 long recieved_beacon_timestamp = 0;
 uint8_t beacon_count = 0;
@@ -40,14 +43,16 @@ int lastAddress = 0;
 void task_process_command( void *params);
 void task_recieve_packet( void *params);
 
+TaskHandle_t process_command_handle;
+
 void setup() {
   Serial.begin(9600);
 
-  while (!Serial);
-  Serial.println("LoRa Receiver");
+  //while (!Serial);
+  Serial.println("INFO: LoRa Receiver init succes!");
   LoRa.setPins(SS, RST, DI0);
   if (!LoRa.begin(BAND, PABOOST )) {
-    Serial.println("Starting LoRa failed!");
+    Serial.println("INFO: Starting LoRa failed!");
     while (1);
   }
 
@@ -57,11 +62,10 @@ void setup() {
   int sensorValue = analogRead(A0);
 
   lastAddress = 0; //sets address back to 0x0
-  
-  BaseType_t ret = xTaskCreate(task_process_command, "task_process_command", 1024, NULL, 1, NULL);
-  Serial.print(ret);
-  ret = xTaskCreate(task_recieve_packet, "task_recieve_packet", 128, NULL, 1, NULL);
-  Serial.print(ret);
+
+  BaseType_t  ret = xTaskCreate(task_receive_packet, "task_receive_packet", 256, NULL, 1, NULL);
+  ret = xTaskCreate(task_process_command, "task_process_command", 256, NULL, 1, NULL);
+
 
   vTaskStartScheduler();
 }
@@ -72,7 +76,6 @@ void loop() {
 void send_ack(float voltage) {
   ack_packet.voltage = voltage;
   beacon_count++;
-  Serial.println(beacon_count);
   ack_packet.beacon_count++;
 
   LoRa.beginPacket();
@@ -100,7 +103,7 @@ void print_all_values() { //print last lines values
     Serial.print(": ");
     Serial.print(temp_voltage);
     Serial.println(" V");
-    delay(1);
+    vTaskDelay( 1 / portTICK_PERIOD_MS ); 
   }
 }
 
@@ -118,7 +121,7 @@ void print_last_value() {
     Serial.print(": ");
     Serial.print(temp_voltage);
     Serial.println(" V");
-    delay(1);
+    vTaskDelay( 1 / portTICK_PERIOD_MS ); 
   } else {
     Serial.println("EEPROM address is empty!");
   }
@@ -136,31 +139,43 @@ void log_data(long timestamp, float voltage) {
   lastAddress += sizeof(float); //move 4 bytes up in address
 }
 
-void task_recieve_packet( void *params) {
+void task_receive_packet( void *params) {
   while (1) {
     // try to parse packet
-    int packet_size = LoRa.parsePacket();
-    if (packet_size == beacon_packet_size) {
-      uint8_t buf[packet_size];
+    int packet_size = LoRa.parsePacket(); //try to parse recieved packet
+    if (packet_size == beacon_packet_size) { //check if the packet has the size of a beacon packet
+      uint8_t buf[packet_size]; //create buffer
 
       int i = 0;
-      while (LoRa.available()) {
+      while (LoRa.available()) { //fill buffer with packet data
         buf[i] = LoRa.read();
         i++;
       }
-      beacon_packet = *(Beacon*)buf;
-      if (beacon_packet.team_number == TEAM_NUMBER) {
+      
+      beacon_packet = *(Beacon*)buf; //cast buffer to struct
+      if (beacon_packet.team_number == TEAM_NUMBER) { //check if the beacon packet is from our team
         recieved_beacon_timestamp = millis();
+        beacon_time = beacon_packet.beacon_time;
+        unsigned int sleep_time = int(float(beacon_time)*0.8);
+  
         Serial.print("team number: ");
         Serial.println(beacon_packet.team_number);
         Serial.print("beacon time: ");
-        Serial.println(beacon_packet.beacon_time);
+        Serial.println(beacon_time);
+        
         float voltage = read_voltage();
         send_ack(voltage);
         log_data(recieved_beacon_timestamp, voltage);
+        
         if (beacon_count == 20) {
           print_all_values();
+          //delete task_process_command
+          //vTaskDelete(process_command_handle);
+          vTaskDelay( 150 / portTICK_PERIOD_MS ); 
+          //LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);          
         }
+
+        //dynamicSleep(sleep_time);
       }
     }
     vTaskDelay( 1 / portTICK_PERIOD_MS ); 
@@ -176,15 +191,16 @@ void task_process_command( void *params ) {
         char command_input_char = command_input[0];
         switch (command_input_char) {
           case '1':
-            Serial.println("Case1");
+            Serial.println("Printing last value!");
             print_last_value();
             break;
           case '2':
-            Serial.println("Case2");
+            Serial.println("Printing all values!");
             print_all_values();
             break;
           case '3':
             Serial.println("Entering sleep mode...");
+            //enter deep sleep mode
             break;
           default:
             Serial.println("Invalid Input:");
