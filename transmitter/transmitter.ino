@@ -1,8 +1,10 @@
+//End device
+
 #include <SPI.h>
 #include <LoRa.h>
 #include <EEPROM.h>
 #include "Arduino_FreeRTOS.h"
-//#include "LowPower.h"
+//#include "LowPower.h" //does not work with FreeRTOS
 
 #define TEAM_NUMBER 1 //number of team
 
@@ -77,7 +79,7 @@ void setup() {
   
   int sensorValue = analogRead(A0); // Get rid of the first voltage read as this holds invalid data
 
-  lastAddress = 0; //sets address back to 0x0
+  lastAddress = 0; //sets address to 0x0
 
   // Create the tasks for receiving/sending and to process a command from the user
   BaseType_t  ret = xTaskCreate(task_receive_packet, "task_receive_packet", 256, NULL, 1, NULL);
@@ -114,7 +116,7 @@ void print_all_values() {
   long temp_timestamp = 0;
   int currentAddress = lastAddress;
   
-  while (currentAddress > (sizeof(float) + sizeof(long))) {
+  while (currentAddress > (sizeof(float) + sizeof(long))) { //print untill EEPROM address is back at 0 to print all values
     currentAddress = currentAddress - sizeof(long);
     EEPROM.get(currentAddress, temp_voltage);
     currentAddress = currentAddress - sizeof(long);
@@ -175,7 +177,7 @@ void task_receive_packet( void *params) {
         i++;
       }
       
-      beacon_packet = *(Beacon*)buf; //cast buffer to struct
+      beacon_packet = *(Beacon*)buf; //cast buffer back to struct
       if (beacon_packet.team_number == TEAM_NUMBER) { //check if the beacon packet is from our team
         recieved_beacon_timestamp = millis();
         beacon_time = beacon_packet.beacon_time;
@@ -195,10 +197,10 @@ void task_receive_packet( void *params) {
           //delete task_process_command
           //vTaskDelete(process_command_handle);
           vTaskDelay( 150 / portTICK_PERIOD_MS ); 
-          //LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);          
+          //LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); //deep sleep forever, does not work with FreeRTOS          
         }
 
-        //dynamicSleep(sleep_time);
+        //dynamicSleep(sleep_time); //does not work with FreeRTOS
       }
     }
     vTaskDelay( 1 / portTICK_PERIOD_MS ); 
@@ -242,3 +244,61 @@ void task_process_command( void *params ) {
   }
   vTaskDelete(NULL);
 }
+
+// Function to sleep dynamically for a specified duration (in seconds)
+/*
+void dynamicSleep(unsigned int sleepTimeSeconds) {
+
+    if (sleepTimeSeconds < 0 || sleepTimeSeconds > 10) {
+        return; // Invalid input, do nothing
+    }
+    // Convert seconds into milliseconds for precision
+    unsigned long remainingTimeMs = sleepTimeSeconds * 1000;
+    
+    // Available sleep intervals in milliseconds
+    const unsigned long sleepIntervals[] = {
+        8000, // SLEEP_8S
+        4000, // SLEEP_4S
+        2000, // SLEEP_2S
+        1000, // SLEEP_1S
+        500,  // SLEEP_500MS
+        250,  // SLEEP_250MS
+        120,  // SLEEP_120MS
+        60,   // SLEEP_60MS
+        30,   // SLEEP_30MS
+        15    // SLEEP_15MS
+    };
+    
+    // Corresponding sleep durations
+    const period_t sleepPeriods[] = {
+        SLEEP_8S,
+        SLEEP_4S,
+        SLEEP_2S,
+        SLEEP_1S,
+        SLEEP_500MS,
+        SLEEP_250MS,
+        SLEEP_120MS,
+        SLEEP_60MS,
+        SLEEP_30MS,
+        SLEEP_15MS
+    };
+
+    // Loop until the remaining time is 0
+    while (remainingTimeMs > 0) {
+        // Find the largest sleep interval less than or equal to the remaining time
+        for (int i = 0; i < sizeof(sleepIntervals) / sizeof(sleepIntervals[0]); i++) {
+            if (remainingTimeMs >= sleepIntervals[i]) {
+                // Sleep for the determined interval
+                //LowPower.powerDown(sleepPeriods[i], ADC_ON, BOD_OFF);
+                //LowPower.idle(sleepPeriods[i], ADC_OFF, TIMER4_OFF, TIMER3_OFF, TIMER1_OFF, TIMER0_OFF, SPI_OFF, USART1_OFF, TWI_OFF, USB_OFF); //9.7mA
+                //LowPower.adcNoiseReduction(sleepPeriods[i], ADC_ON, TIMER2_ON); // 10.64mA // with timer 2 on 10.9
+                //LowPower.powerStandby(sleepPeriods[i], ADC_OFF, BOD_OFF); // 5.8mA
+                LowPower.powerSave(sleepPeriods[i], ADC_OFF, BOD_OFF, TIMER2_OFF); //5.40mA
+
+                // Subtract the slept time from the remaining time
+                remainingTimeMs -= sleepIntervals[i];
+                break;
+            }
+        }
+    }
+}*/

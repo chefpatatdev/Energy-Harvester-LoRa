@@ -1,3 +1,5 @@
+//Gateway
+
 #include <SPI.h>
 #include <LoRa.h>
 #include "LowPower.h"
@@ -11,7 +13,7 @@
 #define SS      8
 #define RST     4
 #define DI0     7
-#define BAND    8663E5  // 915E6
+#define BAND    8663E5
 #define PABOOST true
 
 
@@ -55,11 +57,10 @@ const long interval = 1000;
 long rand_time = 0;
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(9600);
   while(!Serial);
   
-  // This gets used to get a random seed everytime because of the noise on the analog pin
+  // This gets used to get a random seed for the random number generator
   randomSeed(analogRead(0));
   
   // LoRa Setup
@@ -71,12 +72,12 @@ void setup() {
   }
   beacon_packet.team_number = TEAM_NUMBER;
   receive_state = false;
-  delay(2000); // Will be 10 seconds on deployment
+  delay(10000); //wait 10 seconds
 }
 
 void loop() {
   // This checks if we are in receive state or not
-  // After sending the beacon frame the gateway will wait for 1 second to receive data from the end device
+  // After sending the beacon frame, the gateway has a timeout for 1 second to receive data from the end device
   if (!receive_state) {
     
     rand_time = random(2, 10); // Get a random time between 2 and 10 seconds
@@ -95,13 +96,13 @@ void loop() {
     receive_state = true; //Update receive flag to start receiving for 1 second
     previousMillis = millis();
   } else {
-    timed_out = false; // This flag will get used to check if 1 second has passed
+    timed_out = false; // This flag will get used to check if 1 timeout second has passed
     while (receive_state) { // As long as 1 second has not passed the gateway has to keep listening for a receive
       int packetSize = LoRa.parsePacket(); // Try to parse received packet
-      if (packetSize == ack_packet_size) { // This checks if the size is the expected size, thus also filters out unwanted data
+      if (packetSize == ack_packet_size) { // This checks if the size is the expected size, thus also filters out unwanted data/packets
         uint8_t buf[ack_packet_size];
         int i = 0;
-        // For as long as the end device is sending data, the gateway will save it in a buffer
+        // Place all recieved bytes into a buffer
         while (LoRa.available()) {
           buf[i] = LoRa.read(); // read buffer
           i++;
