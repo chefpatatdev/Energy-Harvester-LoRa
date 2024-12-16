@@ -6,7 +6,7 @@
 
 #define TEAM_NUMBER 1 //number of team
 
-//LoRa RFM95W pinout
+//LoR32u4II 868MHz or 915MHz (black board)
 #define SCK     15
 #define MISO    14
 #define MOSI    16
@@ -16,22 +16,32 @@
 #define BAND    8663E5
 #define PABOOST true
 
-//struct for a beacon packet 
+// We implemented structs that get send over the LoRa network
+// All structs will hold the team number to make sure we dont receive packages from other groups
+// Both the gateway and end device will have the same structs so that, at receive time, they can get
+// compared to each other and make sure its receiving the correct data
+
+// Struct that the end device receives from the gateway that holds:
+// - Team number
+// - The time untill the next beacon arives
 typedef struct
 {
   uint8_t team_number;
   long beacon_time;
 } Beacon;
-Beacon beacon_packet; //create beacon packet placeholder
+Beacon beacon_packet; //Create beacon packet placeholder
 
-//struct for a acknowledgement packet
+// Struct that will get send by the end device that holds:
+// - Team number
+// - Received beacons (For debug/potential expansion)
+// - The measured voltage from the end device
 typedef struct
 {
   uint8_t team_number;
   uint8_t beacon_count;
   float voltage;
 } Ack;
-Ack ack_packet; //create ack packet placeholder
+Ack ack_packet; //Create ack packet placeholder
 
 long beacon_time = 0;
 long recieved_beacon_timestamp = 0;
@@ -39,6 +49,9 @@ uint8_t beacon_count = 0;
 int beacon_packet_size = sizeof(Beacon);
 
 int lastAddress = 0;
+
+// The end device will use tasks to coordinate receiving/sending packages over LoRa
+// and processing a command from the user
 
 void task_process_command( void *params);
 void task_recieve_packet( void *params);
@@ -49,8 +62,10 @@ void setup() {
   Serial.begin(9600);
 
   //while (!Serial);
-  Serial.println("INFO: LoRa Receiver init succes!");
+  
+  // LoRa Setup
   LoRa.setPins(SS, RST, DI0);
+  Serial.println("INFO: LoRa Receiver init succes!");
   if (!LoRa.begin(BAND, PABOOST )) {
     Serial.println("INFO: Starting LoRa failed!");
     while (1);
@@ -59,10 +74,12 @@ void setup() {
   ack_packet.team_number = TEAM_NUMBER;
   ack_packet.beacon_count = beacon_count;
   ack_packet.voltage = 0.0;
-  int sensorValue = analogRead(A0);
+  
+  int sensorValue = analogRead(A0); // Get rid of the first voltage read as this holds invalid data
 
   lastAddress = 0; //sets address back to 0x0
 
+  // Create the tasks for receiving/sending and to process a command from the user
   BaseType_t  ret = xTaskCreate(task_receive_packet, "task_receive_packet", 256, NULL, 1, NULL);
   ret = xTaskCreate(task_process_command, "task_process_command", 256, NULL, 1, NULL);
 
@@ -73,9 +90,10 @@ void setup() {
 void loop() {
 }
 
+// Function that will send the voltage to the gateway as a response to receiving the beacon frame
 void send_ack(float voltage) {
   ack_packet.voltage = voltage;
-  beacon_count++;
+  beacon_count++; // Update the beacon count
   ack_packet.beacon_count++;
 
   LoRa.beginPacket();
@@ -83,17 +101,19 @@ void send_ack(float voltage) {
   LoRa.endPacket();
 }
 
+// Function to read the sensor value from the analog pin and outputs the actual voltage
 float read_voltage() {
   int sensorValue = analogRead(A0);
   float voltage = sensorValue * (5.0 / 1023.0);
   return voltage;
 }
 
-void print_all_values() { //print last lines values
+// Function to print all the saved voltages along with their timestamps
+void print_all_values() {
   float temp_voltage = 0;
   long temp_timestamp = 0;
   int currentAddress = lastAddress;
-
+  
   while (currentAddress > (sizeof(float) + sizeof(long))) {
     currentAddress = currentAddress - sizeof(long);
     EEPROM.get(currentAddress, temp_voltage);
@@ -107,12 +127,13 @@ void print_all_values() { //print last lines values
   }
 }
 
+// Function to print the last voltage saved along with its timestamp
 void print_last_value() {
   int currentAddress = lastAddress;
   float temp_voltage = 0;
   long temp_timestamp = 0;
 
-  if (currentAddress > (sizeof(float) + sizeof(long))) {
+  if (currentAddress > (sizeof(float) + sizeof(long))) { // Checks if there is data in EEPROM
     currentAddress = currentAddress - sizeof(long);
     EEPROM.get(currentAddress, temp_voltage);
     currentAddress = currentAddress - sizeof(long);
@@ -128,6 +149,7 @@ void print_last_value() {
 
 }
 
+// Function used to save timestap and voltage into the EEPROM
 void log_data(long timestamp, float voltage) {
   if ((lastAddress + sizeof(long) + sizeof(float)) >= EEPROM.length()) { //create circular buffer, loop back to address 0x00
     lastAddress = 0x0;
@@ -139,6 +161,7 @@ void log_data(long timestamp, float voltage) {
   lastAddress += sizeof(float); //move 4 bytes up in address
 }
 
+// Taks used to receive beacon frame and then send the voltage as a response to the gateway
 void task_receive_packet( void *params) {
   while (1) {
     // try to parse packet
@@ -183,27 +206,29 @@ void task_receive_packet( void *params) {
   vTaskDelete(NULL);
 }
 
+// Task used to process a command from the user
+// Depending on what the user wants to see they will type 1, 2 or 3
 void task_process_command( void *params ) {
   while (1) {
     if (Serial.available() > 0) {
       String command_input = Serial.readStringUntil('\n');
-      if (command_input.length() == 1) {
+      if (command_input.length() == 1) { // If the input is anything bigger then one char it will display an error
         char command_input_char = command_input[0];
         switch (command_input_char) {
-          case '1':
+          case '1': // Command 1 will display the last saved voltage with its timestamp
             Serial.println("Printing last value!");
             print_last_value();
             break;
-          case '2':
+          case '2': // Command 2 will display all the values saved in the EEPROM
             Serial.println("Printing all values!");
             print_all_values();
             break;
-          case '3':
+          case '3': // Command 3 will put the end device into sleep mode
             Serial.println("Entering sleep mode...");
             //enter deep sleep mode
             break;
           default:
-            Serial.println("Invalid Input:");
+            Serial.println("Invalid Input:"); // If the input is not 1, 2 or 3 it will display an error
             Serial.println("Use 1, 2, or 3 to start command");
             break;
         }
